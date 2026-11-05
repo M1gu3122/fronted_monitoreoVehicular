@@ -1,7 +1,7 @@
 const TOKEN_KEY = 'lpr.access_token';
 const BASE_URL_KEY = 'lpr.api_base_url';
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:8000';
+const DEFAULT_BASE_URL = 'https://api-carro.vercel.app';
 const DEFAULT_TIMEOUT = 15000;
 
 export class ApiError extends Error {
