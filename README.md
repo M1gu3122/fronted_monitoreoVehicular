@@ -38,15 +38,23 @@ La compilación de producción fue verificada con `npm run build`. Para desplega
 
 El orden de resolución de la URL base es:
 
-1. Valor guardado en el navegador en `lpr.api_base_url` (se edita en **Configuración**).
+1. Valor guardado en el navegador en `lpr.api_base_url` (clave de `localStorage`).
 2. Variable de entorno `PUBLIC_API_BASE_URL` o `VITE_API_BASE_URL`.
 3. Valor por defecto `http://127.0.0.1:8000`.
 
-Ejemplo de `.env`:
+Para configurar el backend, copie el archivo de ejemplo y ajuste la URL:
+
+```sh
+cp .env.example .env
+```
 
 ```sh
 PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
+
+> **Nota:** el cliente expone `setApiBaseUrl(url)` en `src/lib/service/client.js`, pero
+> todavía no existe la vista `/configuracion` que lo invoque. Por ahora la URL se
+> define por variable de entorno o escribiendo `lpr.api_base_url` en `localStorage`.
 
 La comprobación de disponibilidad consulta `GET /openapi.json`. No valida la base de datos ni la salud de cada módulo.
 
@@ -71,7 +79,7 @@ La comprobación de disponibilidad consulta `GET /openapi.json`. No valida la ba
 - `/alertas`: bandeja y cambio de estado de resolución.
 - `/reportes`: resumen operativo por rango de fechas y zona.
 - `/administracion`: usuarios, roles, permisos y diagnóstico de la API.
-- `/configuracion`: preferencias locales y URL de la API.
+- `/configuracion`: *pendiente de implementar* (preferencias locales y URL de la API).
 
 ## Datos y cálculos
 
@@ -108,11 +116,15 @@ Estas brechas se reflejan en la interfaz y deben corregirse en la API:
 ```text
 src/
   app.css                     sistema visual
-  lib/api/                    cliente HTTP y servicios por recurso
-  lib/components/             shell, UI, modales, gráficas e iconos
-  lib/stores/                 sesión, preferencias y notificaciones
-  lib/utils/                  formato, dominio y transformación de datos
+  app.html                    plantilla HTML
+  lib/
+    components/               shell, UI, modales, gráficas e iconos
+    service/                  cliente HTTP y servicios por recurso
+    stores/                   sesión, preferencias y notificaciones
+    utils/                    formato, dominio y transformación de datos
+    nav.js                    definición del menú lateral
   routes/                     vistas de la aplicación
+static/                       archivos servidos tal cual (favicon, robots.txt)
 ```
 
 ## Verificación
@@ -123,14 +135,28 @@ npm run build
 
 ## ✅ Qué se ha completado
 
-- Compilación de producción (`npm run build`) sin errores (188 módulos transformados).
-- Todas las vistas principales (dashboard, monitoreo, vehículos, zonas, cámaras, eventos, seguimientos, alertas, reportes, administración, configuración) renderizadas y funcionales.
+- Compilación de producción (`npm run build`) sin errores.
+- Vistas implementadas: dashboard, monitoreo, visitas (listado y detalle), vehículos, zonas, cámaras, eventos, seguimientos, alertas, reportes y administración.
 - Corrección de encoding en `reportes` (reemplazo de mojibake y caracteres de control `\x14`).
 - Migración de `client.js` a `import.meta.env` (`VITE_`/`PUBLIC_`) y eliminación de `$env/dynamic/public`.
 - Implementación de `probeBackend()` como `boolean`, `formatNumber` ignora segundo argumento (se usa `.toFixed(1)` en reportes).
-- Limpieza de imports no utilizados en `reportes`, `configuracion`, `eventos`, `dashboard` y `monitoreo`.
+- Limpieza de imports no utilizados en `reportes`, `eventos`, `dashboard` y `monitoreo`.
 - Ajustes de accesibilidad (`label` asociados a inputs, ARIA adecuada).
 - Favicon personalizado (`static\favicon.svg`).
 - Documentación de brechas del backend (autenticación, usuarios, roles PUT, dependencias faltantes).
 
 No hay suite de pruebas automatizadas en el proyecto.
+
+## Estado del repositorio
+
+- Rama principal: `main`.
+- `node_modules/`, `.svelte-kit/`, `.output/` y los archivos `.env` están excluidos.
+- `.env.example` documenta las variables disponibles.
+- `.gitattributes` normaliza los finales de línea a `LF`.
+
+Pendientes conocidos:
+
+- Falta la vista `/configuracion`; la URL de la API se configura por `.env` o por `localStorage`.
+- `adapter-auto` no detecta un entorno de producción; hay que fijar un adaptador concreto
+  (`adapter-node`, `adapter-static`, etc.) según la plataforma de destino.
+- No hay archivo `LICENSE`; el paquete es privado (`"private": true`).
