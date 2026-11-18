@@ -1,5 +1,7 @@
 <script>
-	let { tone = 'neutral', label = '', dot = true } = $props();
+	export let tone = 'neutral';
+	export let label = '';
+	export let dot = true;
 </script>
 
 <span class="pill pill--{tone}">

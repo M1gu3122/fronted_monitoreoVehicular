@@ -1,413 +1,635 @@
 <script>
+ let cargandoEdicion = false;
+ let falloEdicion = '';
+ let revisionEdicion = 0;
+
 	import { onMount } from 'svelte';
-	import PageHeader from '#lib/components/PageHeader.svelte';
-	import StatusPill from '#lib/components/StatusPill.svelte';
-	import Pagination from '#lib/components/Pagination.svelte';
-	import LoadingState from '#lib/components/LoadingState.svelte';
-	import ErrorState from '#lib/components/ErrorState.svelte';
+	import PageHeader, { modalFormulario, confirmarAccion, notificarResultado } from '#lib/components/PageHeader.svelte';
 	import EmptyState from '#lib/components/EmptyState.svelte';
-	import Modal from '#lib/components/Modal.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import StatusPill from '#lib/components/StatusPill.svelte';
 	import {
-		listarVehiculos,
+		obtenerVehiculos,
+		obtenerVehiculoPorId,
 		crearVehiculo,
 		actualizarVehiculo,
-		eliminarVehiculo,
-		listarTiposVehiculo
-	} from '#lib/service/vehiculos.js';
-	import { errorMessage } from '#lib/service/client.js';
-	import { preferences } from '#lib/stores/preferences.svelte.js';
-	import { pushToast, toastError } from '#lib/stores/toasts.svelte.js';
-	import { formatDate, formatDateTime, formatNumber, toDateTimeInput, fromDateTimeInput } from '#lib/utils/format.js';
-	import { paginate, includesText } from '#lib/utils/data.js';
+		eliminarVehiculo
+	} from '#lib/services/api_vehiculos.js';
+	import { obtenerTiposVehiculo } from '#lib/services/api_tipos_vehiculo.js';
 
-	let vehiculos = $state([]);
-	let tipos = $state([]);
-	let loading = $state(true);
-	let error = $state('');
-	let lastUpdated = $state(null);
+	let vehiculos = [];
+	let tipos = [];
+	let cargando = true;
+	let cargandoTipos = true;
+	let errorCarga = '';
+	let errorTipos = '';
+	let mensajeExito = '';
+	let mensajeError = '';
 
-	let search = $state('');
-	let tipoFilter = $state('');
-	let estadoFilter = $state('todos');
-	let pageNumber = $state(1);
+	let busqueda = '';
+	let filtroTipo = 'todos';
+	let filtroEstado = 'todos';
 
-	let modalOpen = $state(false);
-	let editing = $state(null);
-	let form = $state(blankForm());
-	let formErrors = $state({});
-	let saving = $state(false);
-	let deleteTarget = $state(null);
-	let deleting = $state(false);
+	let mostrarFormulario = false;
+	let idEditando = null;
+	let guardando = false;
 
-	function blankForm() {
-		return {
-			placa: '',
-			marca: '',
-			modelo: '',
-			color: '',
-			id_tipo: '',
-			fechaInput: toDateTimeInput(new Date()),
-			estado: true
-		};
+	let placa = '';
+	let marca = '';
+	let modelo = '';
+	let color = '';
+	let fechaRegistro = '';
+	let idTipo = '';
+	let estado = true;
+
+	$: vehiculosFiltrados = vehiculos.filter((vehiculo) => {
+		const texto = busqueda.trim().toLowerCase();
+		const coincideTexto =
+			!texto ||
+			vehiculo.placa.toLowerCase().includes(texto) ||
+			vehiculo.marca.toLowerCase().includes(texto) ||
+			vehiculo.modelo.toLowerCase().includes(texto) ||
+			vehiculo.color.toLowerCase().includes(texto);
+		const coincideTipo = filtroTipo === 'todos' || String(vehiculo.id_tipo) === filtroTipo;
+		const coincideEstado =
+			filtroEstado === 'todos' ||
+			(filtroEstado === 'activos' ? vehiculo.estado : !vehiculo.estado);
+
+		return coincideTexto && coincideTipo && coincideEstado;
+	});
+
+	$: totalVehiculos = vehiculos.length;
+	$: vehiculosActivos = vehiculos.filter((vehiculo) => vehiculo.estado).length;
+	$: ultimaActualizacion = vehiculos.reduce((maximo, vehiculo) => {
+		const valor = new Date(vehiculo.actualizado).getTime();
+		return Number.isNaN(valor) ? maximo : Math.max(maximo, valor);
+	}, 0);
+
+	function nombreTipo(idTipoVehiculo) {
+		const tipo = tipos.find((item) => item.id_tipo === idTipoVehiculo);
+		return tipo ? tipo.nombre : '—';
 	}
 
-	const tipoById = $derived(new Map(tipos.map((item) => [Number(item.id_tipo), item])));
-
-	const filtered = $derived.by(() =>
-		vehiculos
-			.filter((item) => {
-				if (tipoFilter && Number(item.id_tipo) !== Number(tipoFilter)) return false;
-				if (estadoFilter === 'activos' && item.estado === false) return false;
-				if (estadoFilter === 'inactivos' && item.estado !== false) return false;
-				if (search) {
-					const haystack = [item.placa, item.marca, item.modelo, item.color, item.id_vehiculo].filter(Boolean).join(' ');
-					if (!includesText(haystack, search)) return false;
-				}
-				return true;
-			})
-			.sort((a, b) => String(a.placa || '').localeCompare(String(b.placa || ''), 'es', { numeric: true }))
-	);
-	const paged = $derived(paginate(filtered, pageNumber, Number(preferences.pageSize) || 10));
-
-	async function load(silent = false) {
-		if (!silent) loading = true;
-		error = '';
-		const [vehiclesResult, typesResult] = await Promise.allSettled([listarVehiculos(), listarTiposVehiculo()]);
-		if (vehiclesResult.status === 'fulfilled') vehiculos = Array.isArray(vehiclesResult.value) ? vehiclesResult.value : [];
-		else {
-			vehiculos = [];
-			error = errorMessage(vehiclesResult.reason);
+	function formatearFecha(valor) {
+		if (!valor) {
+			return '—';
 		}
-		if (typesResult.status === 'fulfilled') tipos = Array.isArray(typesResult.value) ? typesResult.value : [];
-		else tipos = [];
-		lastUpdated = new Date();
-		loading = false;
+
+		const texto = String(valor);
+		const fecha = /^\d{4}-\d{2}-\d{2}$/.test(texto)
+			? new Date(texto + 'T00:00:00')
+			: new Date(texto);
+
+		if (Number.isNaN(fecha.getTime())) {
+			return '—';
+		}
+
+		return fecha.toLocaleDateString('es-CO', {
+			year: 'numeric',
+			month: 'short',
+			day: '2-digit'
+		});
+	}
+
+	function formatearFechaHora(valor) {
+		if (!valor) {
+			return '—';
+		}
+
+		const fecha = new Date(valor);
+
+		if (Number.isNaN(fecha.getTime())) {
+			return '—';
+		}
+
+		return fecha.toLocaleString('es-CO', {
+			year: 'numeric',
+			month: 'short',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+	}
+
+	function normalizarFechaParaInput(valor) {
+		if (!valor) {
+			return '';
+		}
+
+		return String(valor).slice(0, 10);
+	}
+
+	async function cargarVehiculos() {
+		cargando = true;
+		errorCarga = '';
+
+		try {
+			const datos = await obtenerVehiculos();
+
+			if (!Array.isArray(datos)) {
+				throw new Error('No se pudieron cargar los datos. Actualiza la página e inténtalo de nuevo.');
+			}
+
+			vehiculos = datos;
+		} catch (error) {
+			errorCarga = 'No se pudo cargar la información: ' + error.message;
+		} finally {
+			cargando = false;
+		}
+	}
+
+	async function cargarTipos() {
+		cargandoTipos = true;
+		errorTipos = '';
+
+		try {
+			const datos = await obtenerTiposVehiculo();
+
+			if (!Array.isArray(datos)) {
+				throw new Error('No se pudieron cargar los datos. Actualiza la página e inténtalo de nuevo.');
+			}
+
+			tipos = datos;
+		} catch (error) {
+			errorTipos = 'No se pudieron cargar los tipos de vehículo: ' + error.message;
+		} finally {
+			cargandoTipos = false;
+		}
 	}
 
 	onMount(() => {
-		load();
-		const handleRefresh = () => load(true);
-		window.addEventListener('lpr:refresh', handleRefresh);
-		return () => window.removeEventListener('lpr:refresh', handleRefresh);
+		cargarVehiculos();
+		cargarTipos();
 	});
 
-	function openCreate() {
-		editing = null;
-		form = blankForm();
-		formErrors = {};
-		modalOpen = true;
+	function actualizarTodo() {
+		mensajeExito = '';
+		mensajeError = '';
+		cargarVehiculos();
+		cargarTipos();
 	}
 
-	function openEdit(vehicle) {
-		editing = vehicle;
-		form = {
-			placa: vehicle.placa || '',
-			marca: vehicle.marca || '',
-			modelo: vehicle.modelo || '',
-			color: vehicle.color || '',
-			id_tipo: String(vehicle.id_tipo ?? ''),
-			fechaInput: toDateTimeInput(vehicle.fecha_registro || new Date()),
-			estado: vehicle.estado !== false
-		};
-		formErrors = {};
-		modalOpen = true;
+	function limpiarFormulario() {
+  revisionEdicion += 1; cargandoEdicion = false; falloEdicion = '';
+		idEditando = null;
+		placa = '';
+		marca = '';
+		modelo = '';
+		color = '';
+		fechaRegistro = '';
+		idTipo = '';
+		estado = true;
 	}
 
-	function validate() {
-		const errors = {};
-		if (!form.placa.trim()) errors.placa = 'La placa es obligatoria.';
-		else if (form.placa.trim().length > 10) errors.placa = 'La placa no debe superar 10 caracteres.';
-		if (!form.marca.trim()) errors.marca = 'La marca es obligatoria.';
-		if (!form.modelo.trim()) errors.modelo = 'El modelo es obligatorio.';
-		if (!form.color.trim()) errors.color = 'El color es obligatorio.';
-		if (!form.id_tipo) errors.id_tipo = 'Seleccione un tipo de vehículo.';
-		if (!form.fechaInput) errors.fechaInput = 'Indique la fecha de registro.';
-		formErrors = errors;
-		return Object.keys(errors).length === 0;
+	function abrirCreacion() {
+		mensajeExito = '';
+		mensajeError = '';
+		limpiarFormulario();
+		mostrarFormulario = true;
 	}
 
-	async function save() {
-		if (!validate()) return;
-		saving = true;
-		const payload = {
-			placa: form.placa.trim().toUpperCase(),
-			marca: form.marca.trim(),
-			modelo: form.modelo.trim(),
-			color: form.color.trim(),
-			fecha_registro: fromDateTimeInput(form.fechaInput),
-			estado: form.estado,
-			id_tipo: Number(form.id_tipo),
-			creado: editing?.creado ?? null,
-			actualizado: editing?.actualizado ?? null
-		};
+	function cancelarFormulario() {
+		limpiarFormulario();
+		mostrarFormulario = false;
+	}
+
+	async function prepararEdicion(id) {
+  limpiarFormulario();
+  const revision = ++revisionEdicion;
+  cargandoEdicion = true; falloEdicion = ''; idEditando = id; mostrarFormulario = true;
+
+		mensajeExito = '';
+		mensajeError = '';
+
 		try {
-			if (editing) {
-				await actualizarVehiculo(editing.id_vehiculo, { ...payload, id_vehiculo: editing.id_vehiculo });
-				pushToast({ title: 'Vehículo actualizado', message: `${payload.placa} se actualizó correctamente.` });
+			const vehiculo = await obtenerVehiculoPorId(id);
+   if (revision !== revisionEdicion || !mostrarFormulario) return;
+
+			idEditando = vehiculo.id_vehiculo;
+			placa = vehiculo.placa;
+			marca = vehiculo.marca;
+			modelo = vehiculo.modelo;
+			color = vehiculo.color;
+			fechaRegistro = normalizarFechaParaInput(vehiculo.fecha_registro);
+			idTipo =
+				vehiculo.id_tipo === null || vehiculo.id_tipo === undefined
+					? ''
+					: String(vehiculo.id_tipo);
+			estado = vehiculo.estado;
+			
+		
+  } catch {
+   if (revision === revisionEdicion && mostrarFormulario) falloEdicion = 'No se pudieron cargar los datos. Inténtalo de nuevo.';
+  } finally {
+   if (revision === revisionEdicion) { cargandoEdicion = false;  }
+  }
+ }
+
+	async function guardarVehiculo(evento) {
+		evento.preventDefault();
+
+		mensajeExito = '';
+		mensajeError = '';
+		guardando = true;
+
+		const esEdicion = idEditando !== null;
+		const datos = {
+			placa: placa.trim(),
+			marca: marca.trim(),
+			modelo: modelo.trim(),
+			color: color.trim(),
+			fecha_registro: fechaRegistro,
+			estado,
+			id_tipo: Number(idTipo)
+		};
+
+		try {
+			if (esEdicion) {
+				const respuesta = await actualizarVehiculo(idEditando, datos);
+				mensajeExito = (respuesta && respuesta.mensaje) || 'Vehículo actualizado correctamente.';
 			} else {
-				await crearVehiculo(payload);
-				pushToast({ title: 'Vehículo registrado', message: `${payload.placa} se agregó al registro maestro.` });
+				const respuesta = await crearVehiculo(datos);
+				mensajeExito = (respuesta && respuesta.mensaje) || 'Vehículo registrado correctamente.';
 			}
-			modalOpen = false;
-			await load(true);
-		} catch (err) {
-			toastError(editing ? 'No fue posible actualizar' : 'No fue posible registrar', errorMessage(err));
+
+			limpiarFormulario();
+			mostrarFormulario = false;
+			await cargarVehiculos();
+		} catch (error) {
+			mensajeError =
+				'No se pudo ' +
+				(esEdicion ? 'actualizar' : 'registrar') +
+				' el vehículo: ' +
+				error.message;
 		} finally {
-			saving = false;
+			guardando = false;
 		}
 	}
 
-	async function confirmDelete() {
-		if (!deleteTarget) return;
-		deleting = true;
+	async function borrarVehiculo(vehiculo) {
+  if (vehiculo.tiene_visitas !== false) {
+   mensajeError = vehiculo.tiene_visitas ? 'No puedes eliminar este vehículo porque tiene visitas asociadas.' : 'No se pudo comprobar si el vehículo tiene visitas. Vuelve a abrir el módulo e inténtalo de nuevo.';
+   return;
+  }
+		const seguro = await confirmarAccion('¿Deseas eliminar el vehículo con placa "' + vehiculo.placa + '"?', 'Eliminar');
+
+		if (!seguro) {
+			return;
+		}
+
+		mensajeExito = '';
+		mensajeError = '';
+
 		try {
-			await eliminarVehiculo(deleteTarget.id_vehiculo);
-			pushToast({ title: 'Vehículo eliminado', message: `${deleteTarget.placa} se eliminó del registro.` });
-			deleteTarget = null;
-			await load(true);
-		} catch (err) {
-			toastError('No fue posible eliminar', errorMessage(err));
-		} finally {
-			deleting = false;
+			const respuesta = await eliminarVehiculo(vehiculo.id_vehiculo);
+			mensajeExito = (respuesta && respuesta.mensaje) || 'Vehículo eliminado correctamente.';
+
+			if (idEditando === vehiculo.id_vehiculo) {
+				cancelarFormulario();
+			}
+
+			await cargarVehiculos();
+		} catch (error) {
+			mensajeError = 'No se pudo eliminar el vehículo: ' + error.message;
 		}
 	}
 
-	function resetFilters() {
-		search = '';
-		tipoFilter = '';
-		estadoFilter = 'todos';
-		pageNumber = 1;
+	function limpiarFiltros() {
+		busqueda = '';
+		filtroTipo = 'todos';
+		filtroEstado = 'todos';
 	}
+ $: if (mensajeExito) notificarResultado(mensajeExito, 'success');
+ $: if (mensajeError) notificarResultado(mensajeError, 'error');
 </script>
 
 <PageHeader
 	eyebrow="Registro maestro"
 	title="Vehículos"
-	description="Vehículos identificados que pueden asociarse a visitas y seguimientos. "
+	description="Consulta y administra los vehículos registrados."
 >
-	{#snippet actions()}
-		<button class="btn btn-quiet" type="button" onclick={() => load(true)}>
-			<Icon name="refresh" size={15} />
-			Actualizar
-		</button>
-		<button class="btn btn-accent" type="button" onclick={openCreate}>
+	<svelte:fragment slot="actions">
+		
+		<button data-edicion class="btn btn-accent" type="button" on:click={abrirCreacion}>
 			<Icon name="plus" size={15} />
 			Registrar vehículo
 		</button>
-	{/snippet}
+	</svelte:fragment>
 </PageHeader>
 
-{#if loading}
-	<div class="panel"><LoadingState rows={7} message="Consultando registro de vehículos…" /></div>
-{:else if error}
-	<div class="panel">
-		<div class="panel__body">
-			<ErrorState title="No fue posible cargar los vehículos" message={error} onretry={() => load()} />
+
+
+
+
+<div class="row mb-3">
+	<div class="col-6 col-lg-3">
+		<div class="panel p-3 h-100">
+			<div class="eyebrow-plain">Vehículos registrados</div>
+			<div class="stat-card__value mt-1">{cargando ? '—' : totalVehiculos}</div>
+			<div class="fs-8 text-faint">total registrado</div>
 		</div>
 	</div>
-{:else}
-	<div class="row mb-3">
-		<div class="col-6 col-lg-3">
-			<div class="panel p-3 h-100">
-				<div class="eyebrow-plain">Vehículos registrados</div>
-				<div class="stat-card__value mt-1">{formatNumber(vehiculos.length)}</div>
-				<div class="fs-8 text-faint">registro maestro</div>
-			</div>
-		</div>
-		<div class="col-6 col-lg-3">
-			<div class="panel p-3 h-100">
-				<div class="eyebrow-plain">Activos</div>
-				<div class="stat-card__value mt-1">{formatNumber(vehiculos.filter((item) => item.estado !== false).length)}</div>
-				<div class="fs-8 text-faint">disponibles para asociación</div>
-			</div>
-		</div>
-		<div class="col-6 col-lg-3">
-			<div class="panel p-3 h-100">
-				<div class="eyebrow-plain">Tipos registrados</div>
-				<div class="stat-card__value mt-1">{formatNumber(tipos.length)}</div>
-				<div class="fs-8 text-faint">catálogo de tipos</div>
-			</div>
-		</div>
-		<div class="col-6 col-lg-3">
-			<div class="panel p-3 h-100">
-				<div class="eyebrow-plain">Última actualización</div>
-				<div class="stat-card__value mt-1" style="font-size: 1.15rem;">{lastUpdated ? formatDateTime(lastUpdated) : '—'}</div>
-				<div class="fs-8 text-faint">datos de la API</div>
-			</div>
+	<div class="col-6 col-lg-3">
+		<div class="panel p-3 h-100">
+			<div class="eyebrow-plain">Activos</div>
+			<div class="stat-card__value mt-1">{cargando ? '—' : vehiculosActivos}</div>
+			<div class="fs-8 text-faint">disponibles para asociación</div>
 		</div>
 	</div>
-
-	{#if !tipos.length}
-		<div class="alert-app alert-app--warn mb-3">
-			<Icon name="alert" size={17} />
-			<div>
-				<strong>Catálogo de tipos no disponible</strong>
-				<span>No se pudieron cargar los tipos de vehículo. El formulario no podrá registrar un vehículo sin un tipo válido.</span>
-			</div>
+	<div class="col-6 col-lg-3">
+		<div class="panel p-3 h-100">
+			<div class="eyebrow-plain">Tipos registrados</div>
+			<div class="stat-card__value mt-1">{cargandoTipos || errorTipos ? '—' : tipos.length}</div>
+			<div class="fs-8 text-faint">tipos disponibles</div>
 		</div>
-	{/if}
-
-	<section class="panel">
-		<div class="panel__head">
-			<div>
-				<h3>Registro de vehículos</h3>
-				<p>{filtered.length} de {vehiculos.length} vehículos</p>
+	</div>
+	<div class="col-6 col-lg-3">
+		<div class="panel p-3 h-100">
+			<div class="eyebrow-plain">Última actualización</div>
+			<div class="stat-card__value mt-1 stat-updated">
+				{cargando || !ultimaActualizacion ? '—' : formatearFechaHora(ultimaActualizacion)}
 			</div>
+			<div class="fs-8 text-faint">datos del sistema</div>
 		</div>
+	</div>
+</div>
 
-		<div class="filter-bar">
-			<div class="filter-field filter-field--grow">
-				<label for="veh-search">Buscar</label>
-				<div class="input-group input-group-sm">
-					<span class="input-group-text"><Icon name="search" size={14} /></span>
-					<input id="veh-search" class="form-control form-control-sm" placeholder="Placa, marca, modelo o color" bind:value={search} oninput={() => (pageNumber = 1)} />
+<div class="row g-3">
+	<div class="col-12">
+		<section class="panel h-100">
+			<div class="panel__head">
+				<div>
+					<h3>Registro de vehículos</h3>
+					<p>{vehiculos.length} registros · {vehiculosFiltrados.length} visibles</p>
+				</div>
+				
+			</div>
+
+			<div class="filter-bar">
+				<div class="filter-field filter-field--grow">
+					<label for="veh-search">Buscar</label>
+					<div class="input-group input-group-sm">
+						<span class="input-group-text"><Icon name="search" size={14} /></span>
+						<input
+							id="veh-search"
+							class="form-control form-control-sm"
+							placeholder="Placa, marca, modelo o color"
+							bind:value={busqueda}
+						/>
+					</div>
+				</div>
+				<div class="filter-field filter-field--md">
+					<label for="veh-tipo">Tipo</label>
+					<select id="veh-tipo" class="form-select form-select-sm" bind:value={filtroTipo}>
+						<option value="todos">Todos los tipos</option>
+						{#each tipos as tipo (tipo.id_tipo)}
+							<option value={String(tipo.id_tipo)}>{tipo.nombre}</option>
+						{/each}
+					</select>
+				</div>
+				<div class="filter-field filter-field--sm">
+					<label for="veh-estado">Estado</label>
+					<select id="veh-estado" class="form-select form-select-sm" bind:value={filtroEstado}>
+						<option value="todos">Todos</option>
+						<option value="activos">Activos</option>
+						<option value="inactivos">Inactivos</option>
+					</select>
+				</div>
+				<div class="filter-bar__end">
+					<button class="btn btn-quiet btn-sm" type="button" on:click={limpiarFiltros}>
+						<Icon name="filter" size={14} />
+						Limpiar
+					</button>
 				</div>
 			</div>
-			<div class="filter-field filter-field--md">
-				<label for="veh-tipo">Tipo</label>
-				<select id="veh-tipo" class="form-select form-select-sm" bind:value={tipoFilter} onchange={() => (pageNumber = 1)}>
-					<option value="">Todos los tipos</option>
-					{#each tipos as tipo (tipo.id_tipo)}
-						<option value={tipo.id_tipo}>{tipo.nombre}</option>
-					{/each}
-				</select>
-			</div>
-			<div class="filter-field filter-field--sm">
-				<label for="veh-estado">Estado</label>
-				<select id="veh-estado" class="form-select form-select-sm" bind:value={estadoFilter} onchange={() => (pageNumber = 1)}>
-					<option value="todos">Todos</option>
-					<option value="activos">Activos</option>
-					<option value="inactivos">Inactivos</option>
-				</select>
-			</div>
-			<div class="filter-bar__end">
-				<button class="btn btn-quiet btn-sm" type="button" onclick={resetFilters}>
-					<Icon name="filter" size={14} />
-					Limpiar
-				</button>
-			</div>
-		</div>
 
-		{#if !filtered.length}
-			<EmptyState
-				icon="car"
-				title={vehiculos.length ? 'Sin coincidencias' : 'No hay vehículos registrados'}
-				message={vehiculos.length
-					? 'Ajuste la búsqueda o los filtros.'
-					: 'Registre el primer vehículo para que pueda asociarse a visitas del sistema.'}
-				actionLabel={vehiculos.length ? 'Limpiar filtros' : 'Registrar vehículo'}
-				onaction={vehiculos.length ? resetFilters : openCreate}
-			/>
-		{:else}
-			<div class="table-wrap">
-				<table class="data-table">
-					<thead>
-						<tr>
-							<th>Placa</th>
-							<th>Marca / modelo</th>
-							<th>Color</th>
-							<th>Tipo</th>
-							<th>Fecha de registro</th>
-							<th>Estado</th>
-							<th></th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each paged.items as vehiculo (vehiculo.placa)}
+			{#if cargando}
+				<div class="state-block">
+					<span class="spinner-inline"></span>
+					<p class="mt-2 mb-0">Cargando vehículos...</p>
+				</div>
+			{:else if errorCarga}
+				<div class="alert-app m-3" role="alert">
+					<Icon name="alert" size={16} />
+					<div>
+						<strong>No se pudo cargar la información</strong>
+						{errorCarga}
+					</div>
+				</div>
+				<div class="px-3 pb-3">
+					<button class="btn btn-quiet btn-sm" type="button" on:click={cargarVehiculos}>
+						<Icon name="refresh" size={14} />
+						Reintentar
+					</button>
+				</div>
+			{:else if vehiculos.length === 0}
+				<EmptyState
+					icon="car"
+					title="No hay vehículos registrados"
+					message="Registre el primer vehículo para que pueda asociarse a visitas del sistema."
+				/>
+			{:else if vehiculosFiltrados.length === 0}
+				<EmptyState
+					icon="search"
+					title="Sin coincidencias"
+					message="Ningún vehículo coincide con la búsqueda o los filtros seleccionados."
+				/>
+			{:else}
+				<div class="table-wrap" role="region" aria-label="Tabla desplazable">
+					<table class="data-table" aria-label="Veh?culos registrados"><caption class="visually-hidden">Veh?culos registrados</caption>
+						<thead>
 							<tr>
-								<td><span class="plate">{vehiculo.placa}</span></td>
-								<td><span class="cell-strong">{[vehiculo.marca, vehiculo.modelo].filter(Boolean).join(' ') || '—'}</span></td>
-								<td>{vehiculo.color || '—'}</td>
-								<td>{tipoById.get(Number(vehiculo.id_tipo))?.nombre || `Tipo ${vehiculo.id_tipo ?? '—'}`}</td>
-								<td class="nowrap">{formatDate(vehiculo.fecha_registro)}</td>
-								<td>
-									<StatusPill tone={vehiculo.estado === false ? 'neutral' : 'ok'} label={vehiculo.estado === false ? 'Inactivo' : 'Activo'} dot={false} />
-								</td>
-								<td class="text-end nowrap">
-									<button class="btn btn-quiet btn-icon btn-xs" type="button" onclick={() => openEdit(vehiculo)} title="Editar vehículo" aria-label={`Editar ${vehiculo.placa}`}>
-										<Icon name="edit" size={14} />
-									</button>
-									<button class="btn btn-quiet-danger btn-icon btn-xs ms-1" type="button" onclick={() => (deleteTarget = vehiculo)} title="Eliminar vehículo" aria-label={`Eliminar ${vehiculo.placa}`}>
-										<Icon name="trash" size={14} />
-									</button>
-								</td>
+								<th>Vehículo</th>
+								<th>Tipo</th>
+								<th>Color</th>
+								<th>Fecha de registro</th>
+								<th>Estado</th>
+								<th>Acciones</th>
 							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-			<Pagination page={paged.page} pages={paged.pages} total={paged.total} from={paged.from} to={paged.to} onchange={(next) => (pageNumber = next)} label="vehículos" />
-		{/if}
-	</section>
+						</thead>
+						<tbody>
+							{#each vehiculosFiltrados as vehiculo (vehiculo.id_vehiculo)}
+								<tr>
+									<td>
+										<div class="cell-strong placa-etiqueta">{vehiculo.placa}</div>
+										<div class="cell-sub">{vehiculo.marca} · {vehiculo.modelo}</div>
+									</td>
+									<td><span class="pill pill--info">{nombreTipo(vehiculo.id_tipo)}</span></td>
+									<td>{vehiculo.color}</td>
+									<td class="nowrap">{formatearFecha(vehiculo.fecha_registro)}</td>
+									<td>
+										<StatusPill
+											tone={vehiculo.estado ? 'ok' : 'neutral'}
+											label={vehiculo.estado ? 'Activo' : 'Inactivo'}
+										/>
+									</td>
+									<td class="nowrap">
+										<div class="d-flex gap-1">
+											<button
+												class="btn btn-quiet btn-icon accion-registro"
+												type="button"
+												title="Editar vehículo"
+												data-edicion on:click={() => prepararEdicion(vehiculo.id_vehiculo)}
+											 aria-label={'Editar vehículo ' + vehiculo.placa}><Icon name="edit" size={16} /></button>
+											<button
+												class="btn btn-quiet-danger btn-icon accion-registro"
+												type="button"
+												title={vehiculo.tiene_visitas ? 'No se puede eliminar: tiene visitas asociadas' : vehiculo.tiene_visitas === false ? 'Eliminar vehículo' : 'No se ha podido comprobar si tiene visitas'}
+            disabled={vehiculo.tiene_visitas !== false}
+            aria-describedby={vehiculo.tiene_visitas !== false ? 'motivo-eliminar-' + vehiculo.id_vehiculo : undefined}
+												data-edicion on:click={() => borrarVehiculo(vehiculo)}
+											 aria-label={'Eliminar vehículo ' + vehiculo.placa}><Icon name="trash" size={16} /></button>{#if vehiculo.tiene_visitas !== false}<span data-edicion class="motivo-eliminar" id={'motivo-eliminar-' + vehiculo.id_vehiculo}>{vehiculo.tiene_visitas ? 'Tiene visitas asociadas' : 'Visitas sin verificar'}</span>{/if}
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+				<div class="panel__foot">
+					Mostrando {vehiculosFiltrados.length} de {vehiculos.length} vehículos.
+				</div>
+			{/if}
+		</section>
+	</div>
 
-	
+	{#if mostrarFormulario}
+ <dialog class="modal-app modal-formulario" aria-labelledby="formulario-vehiculos-titulo" use:modalFormulario={cancelarFormulario} aria-busy={cargandoEdicion}>
+<div class="panel__head">
+					<div>
+						<h3 id="formulario-vehiculos-titulo">{idEditando === null ? 'Registrar vehículo' : 'Editar vehículo'}</h3>
+						<p>
+							{idEditando === null
+								? 'Complete los datos del nuevo vehículo.'
+								: 'Actualice los datos del vehículo seleccionado.'}
+						</p>
+					</div>
+					<button
+						class="modal-app__close"
+						type="button"
+						title="Cerrar formulario" aria-label="Cerrar formulario"
+						on:click={cancelarFormulario}
+					>
+						<Icon name="close" size={16} />
+					</button>
+				</div>
+
+				{#if cargandoEdicion}<div class="panel__body estado-edicion" role="status"><span class="spinner-inline" aria-hidden="true"></span><p>Cargando datos...</p><button class="btn btn-quiet" type="button" on:click={cancelarFormulario}>Cancelar</button></div>
+{:else if falloEdicion}<div class="panel__body estado-edicion"><p role="alert">{falloEdicion}</p><div class="d-flex gap-2"><button class="btn btn-accent" type="button" on:click={() => prepararEdicion(idEditando)}>Reintentar</button><button class="btn btn-quiet" type="button" on:click={cancelarFormulario}>Cancelar</button></div></div>
+{:else}
+<form data-edicion class="panel__body" on:submit={guardarVehiculo}>
+ 
+					{#if errorTipos}
+						<div class="alert-app alert-app--warn mb-3" role="alert">
+							<Icon name="alert" size={16} />
+							<div>
+								<strong>Tipos no disponibles</strong>
+								{errorTipos}
+							</div>
+						</div>
+					{/if}
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-placa">Placa</label>
+						<input
+							id="vehiculo-placa"
+							class="form-control"
+							type="text"
+							autocomplete="off"
+							bind:value={placa}
+							required
+						data-campo-api="placa" />
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-marca">Marca</label>
+						<input
+							id="vehiculo-marca"
+							class="form-control"
+							type="text"
+							autocomplete="off"
+							bind:value={marca}
+							required
+						data-campo-api="marca" />
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-modelo">Modelo</label>
+						<input
+							id="vehiculo-modelo"
+							class="form-control"
+							type="text"
+							autocomplete="off"
+							bind:value={modelo}
+							required
+						data-campo-api="modelo" />
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-color">Color</label>
+						<input
+							id="vehiculo-color"
+							class="form-control"
+							type="text"
+							autocomplete="off"
+							bind:value={color}
+							required
+						data-campo-api="color" />
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-fecha">Fecha de registro</label>
+						<input
+							id="vehiculo-fecha"
+							class="form-control"
+							type="date"
+							bind:value={fechaRegistro}
+							required
+						data-campo-api="fecha_registro" />
+					</div>
+
+					<div class="mb-3">
+						<label class="form-label" for="vehiculo-tipo">Tipo de vehículo</label>
+						<select id="vehiculo-tipo" class="form-select" bind:value={idTipo} required data-campo-api="id_tipo">
+							<option value="" disabled>Seleccione un tipo</option>
+							{#each tipos as tipo (tipo.id_tipo)}
+								<option value={String(tipo.id_tipo)}>{tipo.nombre}</option>
+							{/each}
+						</select>
+					</div>
+
+					<div class="form-check mb-3">
+						<input
+							id="vehiculo-estado"
+							class="form-check-input"
+							type="checkbox"
+							bind:checked={estado}
+						data-campo-api="estado" />
+						<label class="form-check-label" for="vehiculo-estado">Vehículo activo</label>
+					</div>
+
+					<div class="d-flex gap-2">
+						<button class="btn btn-accent" type="submit" disabled={guardando}>
+							{#if guardando}
+								<span class="spinner-inline"></span>
+							{/if}
+							{idEditando === null ? 'Registrar vehículo' : 'Guardar cambios'}
+						</button>
+						<button class="btn btn-quiet" type="button" on:click={cancelarFormulario}>
+							Cancelar
+						</button>
+					</div>
+				</form>
 {/if}
 
-<Modal open={modalOpen} onclose={() => (modalOpen = false)} title={editing ? 'Editar vehículo' : 'Registrar vehículo'} subtitle={editing ? `Actualice los datos de ${editing.placa}.` : 'El vehículo quedará disponible para asociarse a visitas detectadas.'} size="lg">
-	<div class="row g-3">
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-placa">Placa *</label>
-			<input id="form-placa" class="form-control" class:is-invalid={formErrors.placa} bind:value={form.placa} placeholder="ABC123" maxlength="10" />
-			{#if formErrors.placa}<div class="invalid-feedback d-block">{formErrors.placa}</div>{/if}
-		</div>
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-marca">Marca *</label>
-			<input id="form-marca" class="form-control" class:is-invalid={formErrors.marca} bind:value={form.marca} placeholder="Toyota" />
-			{#if formErrors.marca}<div class="invalid-feedback d-block">{formErrors.marca}</div>{/if}
-		</div>
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-modelo">Modelo *</label>
-			<input id="form-modelo" class="form-control" class:is-invalid={formErrors.modelo} bind:value={form.modelo} placeholder="Corolla" />
-			{#if formErrors.modelo}<div class="invalid-feedback d-block">{formErrors.modelo}</div>{/if}
-		</div>
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-color">Color *</label>
-			<input id="form-color" class="form-control" class:is-invalid={formErrors.color} bind:value={form.color} placeholder="Blanco" />
-			{#if formErrors.color}<div class="invalid-feedback d-block">{formErrors.color}</div>{/if}
-		</div>
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-tipo">Tipo de vehículo *</label>
-			<select id="form-tipo" class="form-select" class:is-invalid={formErrors.id_tipo} bind:value={form.id_tipo}>
-				<option value="">Seleccione…</option>
-				{#each tipos as tipo (tipo.id_tipo)}
-					<option value={tipo.id_tipo}>{tipo.nombre}</option>
-				{/each}
-			</select>
-			{#if formErrors.id_tipo}<div class="invalid-feedback d-block">{formErrors.id_tipo}</div>{/if}
-		</div>
-		<div class="col-12 col-md-4">
-			<label class="form-label" for="form-fecha">Fecha de registro *</label>
-			<input id="form-fecha" type="datetime-local" class="form-control" class:is-invalid={formErrors.fechaInput} bind:value={form.fechaInput} />
-			{#if formErrors.fechaInput}<div class="invalid-feedback d-block">{formErrors.fechaInput}</div>{/if}
-		</div>
-		<div class="col-12">
-			<div class="form-check">
-				<input id="form-estado" class="form-check-input" type="checkbox" bind:checked={form.estado} />
-				<label class="form-check-label" for="form-estado">Vehículo activo</label>
-			</div>
-		</div>
-	</div>
-	{#snippet footer()}
-		<button class="btn btn-quiet" type="button" onclick={() => (modalOpen = false)} disabled={saving}>Cancelar</button>
-		<button class="btn btn-accent" type="button" onclick={save} disabled={saving}>
-			{#if saving}<span class="spinner-inline"></span>{/if}
-			{editing ? 'Guardar cambios' : 'Registrar vehículo'}
-		</button>
-	{/snippet}
-</Modal>
+ </dialog>
+{/if}
+</div>
 
-<Modal open={Boolean(deleteTarget)} onclose={() => (deleteTarget = null)} title="Eliminar vehículo" subtitle="Esta acción elimina el registro del vehículo." size="sm">
-	{#if deleteTarget}
-		<p class="fs-7 text-soft">
-			¿Confirma la eliminación de <strong>{deleteTarget.placa}</strong> (ID #{deleteTarget.id_vehiculo})? Si el vehículo tiene visitas asociadas, el backend puede rechazar la operación por integridad referencial.
-		</p>
-	{/if}
-	{#snippet footer()}
-		<button class="btn btn-quiet" type="button" onclick={() => (deleteTarget = null)} disabled={deleting}>Cancelar</button>
-		<button class="btn btn-accent" type="button" style="background: var(--danger); border-color: var(--danger);" onclick={confirmDelete} disabled={deleting}>
-			{#if deleting}<span class="spinner-inline"></span>{/if}
-			Eliminar
-		</button>
-	{/snippet}
-</Modal>
+<style>
+	.stat-updated {
+		font-size: 1.05rem;
+	}
+
+ .motivo-eliminar { align-self: center; max-width: 135px; white-space: normal; font-size: .72rem; line-height: 1.35; color: var(--text-soft); }
+</style>

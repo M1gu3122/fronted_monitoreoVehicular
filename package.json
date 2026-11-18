@@ -1,8 +1,12 @@
 {
-	"name": "frontedcarro",
-	"private": true,
+	"name": "gestionvehicular",
 	"version": "0.0.1",
+	"private": true,
 	"type": "module",
+	"imports": {
+		"#lib": "./src/lib/index.js",
+		"#lib/*": "./src/lib/*"
+	},
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
@@ -10,17 +14,16 @@
 		"prepare": "svelte-kit sync || echo ''"
 	},
 	"devDependencies": {
-		"@sveltejs/adapter-static": "^4.0.1",
+		"@sveltejs/adapter-auto": "^8.0.0",
 		"@sveltejs/kit": "^3.0.0",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
-		"svelte": "^5.57.1",
+		"svelte": "^5.57.2",
 		"vite": "^8.3.0"
 	},
-	"imports": {
-		"#lib": "./src/lib/index.js",
-		"#lib/*": "./src/lib/*"
-	},
 	"dependencies": {
-		"bootstrap": "^5.3.8"
+		"bootstrap": "^5.3.8",
+		"datatables.net-bs5": "^3.1.5",
+		"gsap": "^3.15.1",
+		"sweetalert2": "^11.26.25"
 	}
 }
