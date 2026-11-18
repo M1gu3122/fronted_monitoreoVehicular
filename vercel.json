@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "sveltekit",
+  "outputDirectory": "build",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://api-carro.vercel.app/:path*"
+    },
+    {
+      "source": "/((?!api/|_app/|favicon\\.svg|robots\\.txt).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

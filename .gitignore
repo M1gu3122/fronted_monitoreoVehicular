@@ -43,6 +43,17 @@ context.txt
 opencode.json
 informe_extraido.txt
 
+# Documentación y entregables: conservar solo en el equipo
+*.md
+*.pdf
+*.docx
+*.pptx
+*.drawio
+/documentacion/
+/presentacion/
+/Entregables/
+/references/
+
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
